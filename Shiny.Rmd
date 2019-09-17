@@ -1,0 +1,72 @@
+---
+title: "Shiny"
+author: "Yudan Ding"
+date: "9/17/2019"
+output: html_document
+---
+```{r}
+library(shiny)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(readxl)
+library(reshape2)
+library(ggplot2)
+```
+
+
+```{r}
+df <-read.csv('Sales_Byte_ARS_Data_Management.csv')
+df <- select(df, -X:-X.10)
+df$Date <- as.Date(df$Date,"%m/%d/%y")
+summary(df)
+#f$Date <- as.Date(df$Date,'%m/%d/%Y')
+
+daily_sales_by_location <- df %>% 
+  group_by(Date,Kiosk,Fridge.Type) %>% 
+  summarise(total_sales_dollar = sum(Total), total_sales_qty = sum(Qty))
+daily_sales_by_location
+```
+
+```{r}
+#https://shiny.rstudio.com/reference/shiny/0.14/dateRangeInput.html
+ui <- fluidPage(
+  titlePanel('Daily Sales by Locations'),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(inputId = "Fridge.Type", label = strong("Fridge Type"),
+                  choices = unique(daily_sales_by_location$Fridge.Type)
+                  ),
+      dateRangeInput(inputId = 'Date',
+                     label = 'Select a date range:',
+                     start = '2019-03-19',
+                      end = '2019-09-08',
+                    format = 'yyyy-mm-dd'
+      )
+    ),
+    mainPanel(
+      plotOutput(outputId = 'timeseriesplot')
+    )
+  )
+)
+
+server <- function(input, output){
+  # Subset data
+  selectData <- reactive({
+    req(input$Date)
+    validate(need(!is.na(input$Date[1]) & !is.na(input$Date[2]), "Error: Please provide both a start and an end date."))
+    validate(need(input$Date[1] < input$Date[2], "Error: Start date should be earlier than end date."))
+    print(input$Fridge.Type)
+    daily_sales_by_location%>% filter(
+      Fridge.Type == req(input$Fridge.Type),
+      Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))
+  
+  })
+  output$timeseriesplot <- renderPlot({
+   plot( x=selectData()$Date, y= selectData()$total_sales_dollar, type = "l")
+  }
+  )
+}
+
+shinyApp(ui = ui, server = server)
+```
