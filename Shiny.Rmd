@@ -35,3 +35,53 @@ daily_sales_by_location <- df %>%
 daily_sales_by_location
 daily_sales_ftype
 ```
+
+```{r}
+#https://shiny.rstudio.com/reference/shiny/0.14/dateRangeInput.html
+ui <- fluidPage(
+  titlePanel('Daily Sales'),
+  sidebarLayout(
+    sidebarPanel(
+      selectizeInput(inputId = "Fridge.Type", label = strong("Fridge Type"),
+                  choices = unique(daily_sales_by_ftype$Fridge.Type)
+                  ),
+      selectizeInput(inputId = 'Kiosk', label=strong('Kiosk'),
+                  choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
+      dateRangeInput(inputId = 'Date',
+                     label = 'Select a date range:',
+                     start = '2019-03-19',
+                      end = '2019-09-08',
+                    format = 'yyyy-mm-dd'
+      )
+    ),
+    mainPanel(
+      helpText('To view sales breakdown by location, remove your selection for fridge type. To view aggregate sales, remove both selections'),
+      verbatimTextOutput('description'),
+      plotOutput(outputId = 'timeseriesplot')
+    )
+  )
+)
+
+server <- function(input, output){
+  # Subset data
+  selectData <- reactive({
+    req(input$Date)
+    validate(need(!is.na(input$Date[1]) & !is.na(input$Date[2]), "Error: Please provide both a start and an end date."))
+    validate(need(input$Date[1] < input$Date[2], "Error: Start date should be earlier than end date."))
+    {if (input$Fridge.Type != ''){filter(daily_sales_by_ftype, Fridge.Type == req(input$Fridge.Type), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
+    else if (input$Kiosk != ''){filter(daily_sales_by_location, Kiosk == req(input$Kiosk), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
+    else{filter(daily_sales, Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}}
+  })
+  output$timeseriesplot <- renderPlot({
+   ggplot(selectData(), aes(x=Date, y=total_sales_dollar))+geom_path()
+  }
+  )
+  output$description <- renderText({
+    if(input$Fridge.Type != '') {paste('You are now viewing sales breakdown by fridge type [',input$Fridge.Type, ']. No Kiosk has been selected')}
+    else if(input$Kiosk !=''){paste('You have selected [', input$Kiosk, '], You are now viewing sales at', input$Kiosk)}
+    else{paste('You are now viewing aggregate daily sales')}
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
