@@ -1,63 +1,70 @@
 ---
-title: "Shiny"
+title: "Shiny-dashboard"
 author: "Yudan Ding"
 date: "9/17/2019"
 output: html_document
 ---
+
 ```{r}
 library(shiny)
 library(tidyverse)
-library(tidyr)
+#library(tidyr)
 library(dplyr)
-library(readxl)
+#library(readxl)
 library(reshape2)
 library(ggplot2)
 ```
 
 
 ```{r}
-df <-read.csv('Sales_Byte_ARS_Data_Management.csv')
-df <- select(df, -X:-X.10)
+df <- read_csv('Sales_Byte_ARS_Data_Management.csv')
 df$Date <- as.Date(df$Date,"%m/%d/%y")
 summary(df)
-#f$Date <- as.Date(df$Date,'%m/%d/%Y')
+
 
 daily_sales <- df %>% group_by(Date) %>% 
   summarise(total_sales_dollar = sum(Total), total_sales_qty = sum(Qty))
 
-daily_sales_by_ftype <- df %>% group_by(Date, Fridge.Type) %>% 
+daily_sales_by_ftype <- df %>% group_by(Date, Fridge_Type) %>% 
   summarise(total_sales_dollar = sum(Total), total_sales_qty = sum(Qty))
 
 daily_sales_by_location <- df %>% 
-  group_by(Date,Kiosk,Fridge.Type) %>% 
+  group_by(Date,Kiosk,Fridge_Type) %>% 
   summarise(total_sales_dollar = sum(Total), total_sales_qty = sum(Qty))
 
-daily_sales_by_location
-daily_sales_ftype
+daily_sales_by_product <- df %>%
+  group_by(Date, Product) %>%
+  summarise(total_sales_dollar = sum(Total), total_sales_qty = sum(Qty))
 ```
 
+
+
 ```{r}
-#https://shiny.rstudio.com/reference/shiny/0.14/dateRangeInput.html
+
 ui <- fluidPage(
   titlePanel('Daily Sales'),
   sidebarLayout(
     sidebarPanel(
-      selectizeInput(inputId = "Fridge.Type", label = strong("Fridge Type"),
-                  choices = unique(daily_sales_by_ftype$Fridge.Type)
-                  ),
-      selectizeInput(inputId = 'Kiosk', label=strong('Kiosk'),
-                  choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
       dateRangeInput(inputId = 'Date',
                      label = 'Select a date range:',
                      start = '2019-03-19',
                       end = '2019-09-08',
-                    format = 'yyyy-mm-dd'
-      )
+                    format = 'yyyy-mm-dd'),
+      selectizeInput(inputId = "Fridge_Type", label = strong("Fridge Type"),
+                  choices = unique(daily_sales_by_ftype$Fridge_Type)
+                  ),
+      selectizeInput(inputId = 'Kiosk', label=strong('Kiosk'),
+                  choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
+     
+      selectizeInput(inputId= 'Product', label=strong('Product'),
+                     choices = unique(daily_sales_by_product$Product))
+
     ),
     mainPanel(
-      helpText('To view sales breakdown by location, remove your selection for fridge type. To view aggregate sales, remove both selections'),
+      helpText('To view sales breakdown by one criterion, remove your selection for others. To view aggregate sales, remove all selections'),
       verbatimTextOutput('description'),
-      plotOutput(outputId = 'timeseriesplot')
+      plotOutput(outputId = 'timeseriesplot'),
+      checkboxInput('qty', 'Click to view sales volume', value=FALSE)
     )
   )
 )
@@ -68,17 +75,20 @@ server <- function(input, output){
     req(input$Date)
     validate(need(!is.na(input$Date[1]) & !is.na(input$Date[2]), "Error: Please provide both a start and an end date."))
     validate(need(input$Date[1] < input$Date[2], "Error: Start date should be earlier than end date."))
-    {if (input$Fridge.Type != ''){filter(daily_sales_by_ftype, Fridge.Type == req(input$Fridge.Type), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
+    {if (input$Fridge_Type != ''){filter(daily_sales_by_ftype, Fridge_Type == req(input$Fridge_Type), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
     else if (input$Kiosk != ''){filter(daily_sales_by_location, Kiosk == req(input$Kiosk), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
+    else if (input$Product != ''){filter(daily_sales_by_product, Product==req(input$Product), Date>as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
     else{filter(daily_sales, Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}}
   })
   output$timeseriesplot <- renderPlot({
-   ggplot(selectData(), aes(x=Date, y=total_sales_dollar))+geom_path()
+    if(input$qty){ggplot(selectData(),aes(x=Date, y=total_sales_qty))+geom_point()+ylab('Sales volume')}
+    else{ggplot(selectData(), aes(x=Date, y=total_sales_dollar))+geom_path()+ylab('Sales in $')}
   }
   )
   output$description <- renderText({
-    if(input$Fridge.Type != '') {paste('You are now viewing sales breakdown by fridge type [',input$Fridge.Type, ']. No Kiosk has been selected')}
-    else if(input$Kiosk !=''){paste('You have selected [', input$Kiosk, '], You are now viewing sales at', input$Kiosk)}
+    if(input$Fridge_Type != '') {paste('You are now viewing sales breakdown by fridge type [',input$Fridge_Type, ']. No Kiosk has been selected')}
+    else if(input$Kiosk !=''){paste('You have selected [',input$Kiosk, ']. You are now viewing sales at', input$Kiosk)}
+    else if(input$Product !=''){paste('You have selected product[',input$Product,']. You are now viewing sales of',input$Product)}
     else{paste('You are now viewing aggregate daily sales')}
   })
 }
