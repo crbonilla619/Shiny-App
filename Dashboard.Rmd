@@ -1,0 +1,99 @@
+---
+title: "Shiny"
+author: "Cristian Bonilla-Ordoñez"
+date: "9/17/2019"
+output: html_document
+---
+This loads the the packages and the data to be used by the app
+```{r}
+library(shiny)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(shinydashboard)
+library(data.table)
+rm(list = ls()); gc()
+setwd("~/Desktop/Work/6AM Health/Data")
+sale_data                = read_csv("Sales_Data.csv")
+#sale_data                = data.table(sale_data)
+sale_data$Date           = as.Date(sale_data$Date,"%m/%d/%Y")
+```
+```{r}
+daily_sales               = sale_data %>% 
+                            group_by(Date) %>% 
+                            summarise(total_sales_dollar = sum(Total), 
+                                      total_sales_qty = sum(Qty))
+
+daily_sales_by_ftype      = sale_data %>% 
+                            group_by(Date, Fridge_Type) %>% 
+                            summarise(total_sales_dollar = sum(Total), 
+                                      total_sales_qty = sum(Qty))
+
+daily_sales_by_location   = sale_data %>% 
+                            group_by(Date,Kiosk,Fridge_Type) %>% 
+                            summarise(total_sales_dollar = sum(Total), 
+                                      total_sales_qty = sum(Qty))
+```
+
+```{r}
+ui                = dashboardPage(
+  dashboardHeader(title = "6AMHealth"),
+  dashboardSidebar(),
+  dashboardBody(
+    fluidRow(
+      box(selectizeInput(inputId  = "fridge_type", 
+                         label    = strong("Fridge Type"),
+                         choices  = c("Both", "ARS", "Byte"),
+                         multiple = TRUE,
+                         selected = NULL),
+          selectizeInput(inputId  = 'location',
+                         label    = strong('Kiosk'),
+                        choices   = unique(daily_sales_by_location$Kiosk),
+                        selected  = NULL,
+                        multiple  = TRUE),
+          dateRangeInput(inputId  = "date_range",
+                       label      =  "Select Date Range",
+                       start      = min(sale_data$Date),
+                       end        = max(sale_data$Date),
+                       min        = min(sale_data$Date),
+                       max        = max(sale_data$Date),
+                       format     = "yyyy-mm-dd",
+                       separator  =  "-")
+        ),
+      box(plotOutput("plot1"))
+      )
+    )
+)
+
+server            = shinyServer(function(input, output){
+                      selected_data = reactive({
+                        req(input$date_range)
+                        validate(need(!is.na(input$date_range[1]) & !is.na(input$date_range[2]), 
+                                      "Error: Please provide both a start and an end date."))
+                        validate(need(input$date_range[1] < input$date_range[2], 
+                                      "Error: Start date should be earlier than end date."))
+                        switch(input$fridge_type, 
+                               "Both" = daily_sales_by_ftype,
+                               "ARS"  = daily_sales_by_ftype %>% 
+                                 filter(Fridge_Type=="ARS",
+                                 Date > as.POSIXct(as.Date(input$date_range[1])) & 
+                                 Date < as.POSIXct(as.Date(input$date_range[2]))),
+                               "Byte"  = daily_sales_by_ftype %>% 
+                                 filter(Fridge_Type=="Byte",
+                                 Date > as.POSIXct(as.Date(input$date_range[1])) & 
+                                 Date < as.POSIXct(as.Date(input$date_range[2]))))
+                        
+                        switch(input$location, 
+                                                  daily_sales_by_location %>% 
+                                                  filter(Kiosk %in% input$location,
+                                                  Date > as.POSIXct(as.Date(input$date_range[1])) & 
+                                                  Date < as.POSIXct(as.Date(input$date_range[2]))))                        
+                        })
+                      output$plot1 = renderPlot({
+                        ggplot(selected_data(), aes(x=Date, y=total_sales_dollar))+
+                               geom_path()+
+                               geom_point()
+                      })
+})
+shinyApp(ui = ui, server = server)
+```
