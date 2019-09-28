@@ -1,1 +1,104 @@
+title: "6AM Health"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+---
 
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(knitr)
+library(DT)
+library(rpivotTable)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(openintro)
+library(highcharter)
+library(ggvis)
+```
+
+```{r}
+setwd("C:/Users/ngugi/Desktop/6 AM Health/DashBoard 6AM")
+Sales <- read.csv("Sales_Byte_ARS_Data_Management - UpTo 9_23.csv")
+Sales$Date <- as.Date(Sales$Date, "%m/%d/%Y")
+#Sales$Product <- as.character(Sales$Product)
+#str(Sales)
+```
+
+```{r}
+mycolors <- c("green", "lightgreen", "darkgreen", "orange")
+```
+
+Dashboard Introduction
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+###Sales Yesterday
+```{r}
+Total_Sales_yesterday  = Sales %>% select(Date, Total) %>% 
+                                filter(Sales$Date>=max(Sales$Date))  %>%
+                                summarise(Total_Sales_yesterday = sum(Total))
+valueBox (value = Total_Sales_yesterday,icon = "fa-thumbs-up",caption = "Sales Yesterday",color = "orange")
+```
+
+###Sales Lastweek
+```{r, message=F, echo=F, warning=F}
+Total_Sales_last_week  = Sales %>% select(Date, Total) %>% 
+                                filter(Sales$Date>="2019-09-17", Sales$Date <="2019-09-23") %>%
+                                summarise(total_sales_lastweek = sum(Total))
+valueBox(value = Total_Sales_last_week ,icon = "fa-tag",caption = "Sales last Week",color = "darkgreen")
+```
+
+###Sales Per Fridge_Type ARS
+```{r}
+dailysales_Byte <- Sales %>% select (Total, Fridge_Type, Date) %>% 
+                        filter(Sales$Fridge_Type == "ARS") %>%
+                        summarise(total_sales_dollar = sum(Total))
+
+valueBox(value = dailysales_Byte, icon = "fa-building", caption = "ARS Sales", color = "lightgreen")
+```
+
+###Sales Per Fridge_Type Byte
+```{r}
+dailysales_Byte <- Sales %>% select (Total, Fridge_Type, Date) %>% 
+                        filter(Sales$Fridge_Type == "Byte") %>%
+                        summarise(total_sales_dollar = sum(Total))
+
+valueBox(value = dailysales_Byte, icon = "fa-building", caption = "Byte Sales", color = "lightgreen")
+```
+
+
+Row
+----------------------------------------------
+
+###6AM Health Products
+```{r}
+AM_Products = unique(Sales$Product)
+#print(AM_Products)
+Product_Sales <- Sales %>% group_by(Product) %>%
+                 summarise(total_each=sum(n())) %>%
+                 arrange(desc(total_each))
+Product_Sales
+```
+
+##Represent in a Pie-Chart
+```{r}
+p1 <- Product_Sales %>% 
+         filter(total_each>80, Product !="Bottle Water") %>%
+         plot_ly(labels = ~Product,
+                 values = ~total_each,
+                 marker = list(colors = mycolors)) %>%
+         add_pie(hole = 0.1) %>%
+         layout(xaxis = list(zeroline = F,
+                             showline = F,
+                             showticklabels = F,
+                             showgrid = F),
+                yaxis = list(zeroline = F,
+                             showline = F,
+                             showticklabels=F,
+                             showgrid=F))
+p1
+```
