@@ -1,7 +1,9 @@
 library(shiny)
 library(shinydashboard)
+library(tidyverse)
+library(rpivotTable)
 
-df <- read_csv('Sales_Byte_ARS_Data_Management - Sales Transactions.csv')
+df <- read_csv('Sales_Data.csv')
 df$Date <- as.Date(df$Date,"%m/%d/%Y")
 summary(df)
 
@@ -22,75 +24,84 @@ daily_sales_by_product <- df %>%
 
 shinyUI(
   dashboardPage(skin = "black",
-    dashboardHeader(title = tags$a(href='https://www.6amhealth.com/',tags$img(src="//cdn.shopify.com/s/files/1/2639/0012/files/6AM_BB_b555713e-b5ab-47ec-a4a3-881dfa1c0567_500x.png?v=1568994487",
-                                                                              height = "30px"),
-                                   style = "padding-top:10px; padding-bottom:10px;")),
-    dashboardSidebar(
-      sidebarMenu(
-        menuItem("Dashboard"),
-        menuItem("Charts",tabName = 'visuals'),
-        menuItem("Reports", tabName = 'reports'),
-        menuItem("Analysis")
-      )
-    ),
-    dashboardBody(
-      tabItems(
-      tabItem(tabName = "visuals",
-              fluidPage(
-                titlePanel('Daily Sales'),
-                sidebarLayout(
-                  sidebarPanel(
-                    dateRangeInput(inputId = 'Date',
-                                   label = 'Select a date range:',
-                                   start = '2019-03-19',
-                                   end = '2019-09-08',
-                                   format = 'yyyy-mm-dd'),
-                    selectizeInput(inputId = "Fridge_Type", label = strong("Fridge Type"),
-                                   choices = unique(daily_sales_by_ftype$Fridge_Type)
-                    ),
-                    selectizeInput(inputId = 'Kiosk', label=strong('Kiosk'),
-                                   choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
-                    
-                    selectizeInput(inputId= 'Product', label=strong('Product'),
-                                   choices = unique(daily_sales_by_product$Product))
-                    
-                  ),
-                  mainPanel(
-                    helpText('To view sales breakdown by one criterion, remove your selection for others. To view aggregate sales, remove all selections'),
-                    verbatimTextOutput('description'),
-                    plotOutput(outputId = 'timeseriesplot'),
-                    checkboxInput('qty', 'Click to view sales volume', value=FALSE)
+                dashboardHeader(title = tags$a(href='https://www.6amhealth.com/',tags$img(src="//cdn.shopify.com/s/files/1/2639/0012/files/6AM_BB_b555713e-b5ab-47ec-a4a3-881dfa1c0567_500x.png?v=1568994487",
+                                                                                          height = "30px"),
+                                               style = "padding-top:10px; padding-bottom:10px;")),
+                dashboardSidebar(
+                  sidebarMenu(
+                    menuItem("Dashboard"),
+                    menuItem("Charts",tabName = 'visuals'),
+                    menuItem("Reports", tabName = 'reports'),
+                    menuItem("Analysis", tabName = 'analysis')
                   )
-                )
-              )
-            ),
-      tabItem(tabName = 'reports',
-              fluidPage(
-                titlePanel('Daily Sales Reports'),
-                sidebarLayout(
-                  sidebarPanel(
-                    dateRangeInput(inputId = 'DateT',
-                                   label = 'Select a date range:',
-                                   start = '2019-03-19',
-                                   end = '2019-09-08',
-                                   format = 'yyyy-mm-dd'),
-                    selectizeInput(inputId = "Fridge_TypeT", label = strong("Fridge Type"),
-                                   choices = unique(daily_sales_by_ftype$Fridge_Type)
+                ),
+                dashboardBody(
+                  tabItems(
+                    tabItem(tabName = "visuals",
+                            fluidPage(
+                              titlePanel('Daily Sales'),
+                              sidebarLayout(
+                                sidebarPanel(
+                                  dateRangeInput(inputId = 'Date',
+                                                 label = 'Select a date range:',
+                                                 start = '2019-03-19',
+                                                 end = '2019-09-23',
+                                                 format = 'yyyy-mm-dd'),
+                                  selectizeInput(inputId = "Fridge_Type", label = strong("Fridge Type"),
+                                                 choices = unique(daily_sales_by_ftype$Fridge_Type)
+                                  ),
+                                  selectizeInput(inputId = 'Kiosk', label=strong('Kiosk'),
+                                                 choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
+                                  
+                                  selectizeInput(inputId= 'Product', label=strong('Product'),
+                                                 choices = unique(daily_sales_by_product$Product))
+                                  
+                                ),
+                                mainPanel(
+                                  helpText('To view sales breakdown by one criterion, remove your selection for others. To view aggregate sales, remove all selections'),
+                                  verbatimTextOutput('description'),
+                                  plotOutput(outputId = 'timeseriesplot'),
+                                  checkboxInput('qty', 'Click to view sales volume', value=FALSE)
+                                )
+                              )
+                            )
                     ),
-                    selectizeInput(inputId = 'KioskT', label=strong('Kiosk'),
-                                   choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
-                    
-                    selectizeInput(inputId= 'ProductT', label=strong('Product'),
-                                   choices = unique(daily_sales_by_product$Product))
-                    
-                  ),
-                  mainPanel(
-                    helpText('To view sales breakdown by one criterion, remove your selection for others. To view aggregate sales, remove all selections'),
-                    verbatimTextOutput('descriptionT'),
-                    DT::dataTableOutput("table")
-                  )
-                )
-              ))
-    ))
+                    tabItem(tabName = 'reports',
+                            fluidPage(
+                              titlePanel('Daily Sales Reports'),
+                              sidebarLayout(
+                                sidebarPanel(
+                                  dateRangeInput(inputId = 'DateT',
+                                                 label = 'Select a date range:',
+                                                 start = '2019-03-19',
+                                                 end = '2019-09-23',
+                                                 format = 'yyyy-mm-dd'),
+                                  selectizeInput(inputId = "Fridge_TypeT", label = strong("Fridge Type"),
+                                                 choices = unique(daily_sales_by_ftype$Fridge_Type)
+                                  ),
+                                  selectizeInput(inputId = 'KioskT', label=strong('Kiosk'),
+                                                 choices = unique(daily_sales_by_location$Kiosk),selected = NULL),
+                                  
+                                  selectizeInput(inputId= 'ProductT', label=strong('Product'),
+                                                 choices = unique(daily_sales_by_product$Product))
+                                  
+                                ),
+                                mainPanel(
+                                  helpText('To view sales breakdown by one criterion, remove your selection for others. To view aggregate sales, remove all selections'),
+                                  verbatimTextOutput('descriptionT'),
+                                  DT::dataTableOutput("table")
+                                )
+                              )
+                            )),
+                    tabItem(tabName = "analysis",
+                            fluidPage(
+                              titlePanel('Pivot Table of Sales'),
+                                mainPanel(
+                                  helpText('To view sales breakdown by the desired criteria use the tabs on the tables to set the parameters'),
+                                  rpivotTableOutput(outputId = 'sales_pivot_table')
+                                )
+                              )
+                            )
+                    )
+                  ))
   )
-)
