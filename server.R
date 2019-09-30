@@ -2,9 +2,10 @@ library(shiny)
 library(shinydashboard)
 library(tidyverse)
 library(ggplot2)
+library(rpivotTable)
 
 
-df <- read_csv('Sales_Byte_ARS_Data_Management - Sales Transactions.csv')
+df <- read_csv('Sales_Data.csv')
 df$Date <- as.Date(df$Date,"%m/%d/%Y")
 summary(df)
 
@@ -25,7 +26,7 @@ daily_sales_by_product <- df %>%
 
 shinyServer(function(input,output){
   selectData <- reactive({
-  #For the first tab  
+    #For the first tab  
     req(input$Date)
     validate(need(!is.na(input$Date[1]) & !is.na(input$Date[2]), "Error: Please provide both a start and an end date."))
     validate(need(input$Date[1] < input$Date[2], "Error: Start date should be earlier than end date."))
@@ -33,7 +34,7 @@ shinyServer(function(input,output){
       else if (input$Kiosk != ''){filter(daily_sales_by_location, Kiosk == req(input$Kiosk), Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
       else if (input$Product != ''){filter(daily_sales_by_product, Product==req(input$Product), Date>as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}
       else{filter(daily_sales, Date > as.POSIXct(input$Date[1]) & Date < as.POSIXct(input$Date[2]))}}
-  #For the second tab  
+    #For the second tab  
   })
   selectDataT <- reactive({
     req(input$DateT)
@@ -49,6 +50,9 @@ shinyServer(function(input,output){
     else{ggplot(selectData(), aes(x=Date, y=total_sales_dollar))+geom_path()+ylab('Sales in $')}
   }
   )
+  output$sales_pivot_table <- renderRpivotTable({
+    rpivotTable(data = df)
+  })
   output$description <- renderText({
     if(input$Fridge_Type != '') {paste('You are now viewing sales breakdown by fridge type [',input$Fridge_Type, ']. No Kiosk has been selected')}
     else if(input$Kiosk !=''){paste('You have selected [',input$Kiosk, ']. You are now viewing sales at', input$Kiosk)}
