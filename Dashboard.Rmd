@@ -1,0 +1,891 @@
+---
+output: 
+  flexdashboard::flex_dashboard:
+    theme: flatly
+    logo: ~/Downloads/6AMHealth/Logo.png
+    orientation: rows
+runtime: shiny
+---
+
+```{r}
+library(flexdashboard)
+library(knitr)
+library(DT)
+library(rpivotTable)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(openintro)
+library(highcharter)
+library(gsheet)
+library(data.table)
+library(zoo)
+library(gsheet)
+library(shiny)
+library(tidyverse)
+library(scales)
+```
+
+
+```{r}
+
+url = 'https://docs.google.com/spreadsheets/d/1_8CvwhQM9vK5AWr3Jkn64b_5pH78NKNSwak2WnYNd4o/edit?usp=sharing'
+url2 = 'https://docs.google.com/spreadsheets/d/1_8CvwhQM9vK5AWr3Jkn64b_5pH78NKNSwak2WnYNd4o/edit#gid=613274356'
+df = fread(text = gsheet2text(url, format = 'csv'), stringsAsFactors = FALSE)
+df$Date <- as.Date(df$Date, "%m/%d/%Y")
+df$Kiosk <- as.character(df$Kiosk) 
+df$DateTime <- as.POSIXct(paste(df$Date, df$Time), format = "%Y-%m-%d %I:%M:%S %p")
+
+last_seven_days = subset(df,Date >= as.Date(max(df$Date),format='%Y-%m-%d')-6)
+number_of_fridge_active <- length(unique(df$Kiosk))
+
+
+info <- fread(text = gsheet2text(url2, format = 'csv'), stringsAsFactors = FALSE)
+info <- info%>%select(Kiosk:`Food Waste %`)
+info <- drop_na(info)
+```
+
+Daily Reports 
+=======================================================================
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+```{r, echo=FALSE, message=FALSE}
+#create the dates to be in the table 
+top_date  = as.Date(max(df$Date),format='%Y-%m-%d')
+low_date  = top_date-6
+dts_      = seq.Date(low_date, top_date,by="day")
+daterange = dts_[rev(order(as.Date(dts_, format = "%m-%d-%Y")))]
+
+#Create a list that contains the data sliced into 7 dataframes in order to calculate 
+#7 different 7-day averages 
+my_sales = list()
+p = 1
+for (i in daterange){
+  sliced = subset(df, Date >= (as.Date(i, origin="1970-01-01")-6) & Date <= as.Date(i, origin="1970-01-01"))
+  my_sales[[p]] = sliced
+  p = p+1
+}
+
+rolling_stats = as.data.frame(matrix(c("ARS", "Byte", "Total","ARS Avg.Units Sold per Fridge",
+                   "Byte Avg.Units Sold per Fridge","Combined Avg. Units Sold per Fridge"), ncol = 1, nrow = 6))
+
+for (i in seq(1:7)){
+  rolling      = my_sales[[i]]
+  edited_7days = rolling %>% select(Date, Total, Qty, Fridge_Type) %>% group_by(Fridge_Type,Date) %>%
+                              summarise(Sales = sum(Total),Units_Sold = sum(Qty)) %>% 
+                              group_by(Date, Fridge_Type) %>% summarise(Total = sum(Units_Sold))
+  #create the dates to be in the table 
+  max_date     = as.Date(max(edited_7days$Date),format='%Y-%m-%d')
+  min_date     = max_date-6
+  dts_seq      = seq.Date(min_date, max_date,by="day")
+  datelist     = dts_seq[rev(order(as.Date(dts_seq, format = "%m-%d-%Y")))]
+  edited_wide  = spread(edited_7days,Date,Total)
+  edited_wide[is.na(edited_wide)] = 0
+  total_row    = c("Total",colSums(edited_wide[,2:8]))
+  edited_wide  = rbind(edited_wide,total_row)
+  edited_wide  = edited_wide %>% mutate_at(2:8, as.integer)
+  Weekly       = c(rowSums(edited_wide[,2:8])/7)
+  edited_wide  = cbind(edited_wide,Weekly)
+  edited_wide  = edited_wide[,c(1,9,8,7,6,5,4,3,2)]
+  colnames(edited_wide) = c("Fridge Type", "Weekly Avg.", paste(weekdays(datelist),datelist,sep = " "))
+  edited_wide  = edited_wide %>% mutate_at(2:8, as.integer)
+  
+  #The next three variables store the total number of fridges active in the last 7 days 
+  n_fridges    = rolling %>% summarise(n_distinct(Kiosk))
+  n_Byte       = rolling %>% filter(Fridge_Type=="Byte") %>% summarise(n_distinct(Kiosk))
+  n_ARS        = rolling %>% filter(Fridge_Type=="ARS") %>% summarise(n_distinct(Kiosk))
+  
+  ARS_row      = round(edited_wide[which(edited_wide[,1]=="ARS"),2:9]/sum(n_ARS),2)
+  Byte_row     = round(edited_wide[which(edited_wide[,1]=="Byte"),2:9]/sum(n_Byte),2)
+  Total_row    = round(edited_wide[which(edited_wide[,1]=="Total"),2:9]/sum(n_fridges),2)
+  edited_wide  = bind_rows(edited_wide,ARS_row,Byte_row,Total_row)
+  edited_wide[4:6,1] = c("ARS Avg. Units Sold per Fridge","Byte Avg. Units Sold per Fridge","Combined Avg. Units Sold per Fridge")
+  rolling_stats= cbind(rolling_stats, edited_wide$`Weekly Avg.`)
+}
+colnames(rolling_stats) = c("Metrics", paste(weekdays(daterange),daterange,sep = " "))
+```
+
+### Last 7 days 
+The first column tells  you the fridge type.
+
+The second column shows you the amount of active fridges in the last 7 days.
+
+The third column tells you the Avg. dollar price point per unit per fridge type of the last 7 days.
+
+The fourth column represents the Avg. price point per unit sold of over the last 7 days
+
+```{r, echo=FALSE, fig.width=10, fig.height=7}
+#this is for the first table 
+last_seven_days = subset(df,Date >= as.Date(max(df$Date),format='%Y-%m-%d')-6)
+n_fridges = last_seven_days %>% summarise(n_distinct(Kiosk))
+n_Byte    = last_seven_days %>% filter(Fridge_Type=="Byte") %>% summarise(n_distinct(Kiosk))
+n_ARS     = last_seven_days %>% filter(Fridge_Type=="ARS") %>% summarise(n_distinct(Kiosk))
+#this stores all three previous values into a single vector 
+Fridges   = unname(c(n_ARS,n_Byte,n_fridges))
+
+grouped_7days = last_seven_days %>% group_by(Fridge_Type) %>% summarise(Sales = sum(Total),
+                                                                        Units = sum(Qty))
+grouped_7days = rbind(grouped_7days, c("Total", colSums(grouped_7days[,2:3])))
+grouped_7days = grouped_7days %>% mutate_at(2:3, as.integer)
+column2       = cbind(grouped_7days$Fridge_Type,c(round(grouped_7days$Sales/grouped_7days$Units,2)))
+column1       = rolling_stats[4:6,1:2] 
+first_T       = cbind(column2[,1],Fridges, column1[,2],column2[,2])
+first_T_colnames = c("Fridge Type","Amount", "Avg. Units Sold Per Fridge", "Avg. Price per Unit")
+colnames(first_T) = first_T_colnames
+
+first_T[,4] = paste("$", first_T[,4], sep = "")
+datatable(first_T, filter = "top", options = list(pageLength = nrow(first_T), autoWidth=TRUE))
+```
+
+### Last 7 days Units Rolling Averages
+Each column contains the weekly average of units sold for the past 7 days for everyday in the past week
+```{r, echo=FALSE, message=FALSE}
+#use the datatable() function from the formattable package 
+datatable(rolling_stats, filter = "top", options = list(pageLength = nrow(rolling_stats), autoWidth=TRUE))
+```
+
+### Last 7 days Sales Rolling Averages
+Each column contains the weekly average of sales made for the past 7 days for everyday in the past week
+
+```{r, echo=FALSE, message=FALSE}
+#create the dates to be in the table 
+top_date  = as.Date(max(df$Date),format='%Y-%m-%d')
+low_date  = top_date-6
+dts_      = seq.Date(low_date, top_date,by="day")
+
+daterange = dts_[rev(order(as.Date(dts_, format = "%m-%d-%Y")))]
+
+#Create a list that contains the data sliced into 7 dataframes in order to calculate 
+#7 different 7-day averages 
+my_sales = list()
+p = 1
+for (i in daterange){
+  sliced = subset(df, Date >= (as.Date(i, origin="1970-01-01")-6) & Date <= as.Date(i, origin="1970-01-01"))
+  my_sales[[p]] = sliced
+  p = p+1
+}
+
+rolling_stats = as.data.frame(matrix(c("ARS", "Byte", "Total","ARS Avg. Dollar Sales per Fridge",
+                   "Byte Avg. Dollar Sales per Fridge","Combined Avg. Dollar Sales per Fridge"), ncol = 1, nrow = 6))
+
+for (i in seq(1:7)){
+  rolling      = my_sales[[i]]
+  edited_7days = rolling %>% select(Date, Total, Qty, Fridge_Type) %>% group_by(Fridge_Type,Date) %>%
+                              summarise(Sales = sum(Total),Units_Sold = sum(Qty)) %>% 
+                              group_by(Date, Fridge_Type) %>% summarise(Total = sum(Sales))
+  #create the dates to be in the table 
+  max_date     = as.Date(max(edited_7days$Date),format='%Y-%m-%d')
+  min_date     = max_date-6
+  dts_seq      = seq.Date(min_date, max_date,by="day")
+  datelist     = dts_seq[rev(order(as.Date(dts_seq, format = "%m-%d-%Y")))]
+  edited_wide  = spread(edited_7days,Date,Total)
+  edited_wide[is.na(edited_wide)] = 0
+  total_row    = c("Total",colSums(edited_wide[,2:8]))
+  edited_wide  = rbind(edited_wide,total_row)
+  edited_wide  = edited_wide %>% mutate_at(2:8, as.integer)
+  Weekly       = c(rowSums(edited_wide[,2:8])/7)
+  edited_wide  = cbind(edited_wide,Weekly)
+  edited_wide  = edited_wide[,c(1,9,8,7,6,5,4,3,2)]
+  colnames(edited_wide) = c("Fridge Type", "Weekly Avg.", paste(weekdays(datelist),datelist,sep = " "))
+  edited_wide  = edited_wide %>% mutate_at(2:8, as.integer)
+  
+  #The next three variables store the total number of fridges active in the last 7 days 
+  n_fridges    = rolling %>% summarise(n_distinct(Kiosk))
+  n_Byte       = rolling %>% filter(Fridge_Type=="Byte") %>% summarise(n_distinct(Kiosk))
+  n_ARS        = rolling %>% filter(Fridge_Type=="ARS") %>% summarise(n_distinct(Kiosk))
+  
+  ARS_row      = round(edited_wide[which(edited_wide[,1]=="ARS"),2:9]/sum(n_ARS),2)
+  Byte_row     = round(edited_wide[which(edited_wide[,1]=="Byte"),2:9]/sum(n_Byte),2)
+  Total_row    = round(edited_wide[which(edited_wide[,1]=="Total"),2:9]/sum(n_fridges),2)
+  edited_wide  = bind_rows(edited_wide,ARS_row,Byte_row,Total_row)
+  edited_wide[4:6,1] = c("ARS Avg. Dollar Sales per Fridge","Byte Avg. Dollar Sales per Fridge","Combined Avg. Dollar Sales per Fridge")
+  rolling_stats= cbind(rolling_stats, edited_wide$`Weekly Avg.`)
+}
+
+colnames(rolling_stats) = c("Metrics", paste(weekdays(daterange),daterange,sep = " "))
+```
+
+```{r, echo=FALSE, message=FALSE}
+my_copy = data.frame(rolling_stats)
+for (i in 2:8){
+  for (b in 1:6){
+    rolling_stats[b,i] = paste("$", rolling_stats[b,i], sep = "")
+  }
+}
+#use the datatable() function from the formattable package 
+datatable(rolling_stats, filter = "top", options = list(pageLength = nrow(rolling_stats), autoWidth=TRUE))
+```
+
+Sales
+=======================================================================
+
+
+Inputs {.sidebar data-width=200}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput('Kiosk', 'Select a kiosk', unique(df$Kiosk))
+```
+
+* Use ‘Select a kiosk’ sidebar to select ONE kiosk.  
+* Please refer to 'About' if you have any questions. 
+
+
+Row
+-----------------------------------------------------------------------
+### Days Active
+    
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+days <- reactive({
+  startDate = min(selectedData()$Date)
+  daysOperational = Sys.Date()-startDate
+})
+
+
+
+#valueBox(value = days$daysOperational, icon = "fa-pencil")
+renderValueBox({
+  daysactive <- formatC(days(),  digits = 0, format = 'f')
+  valueBox(
+    value = daysactive
+  )
+})
+
+
+```
+
+### Units Sold to Date
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+units_sold <- reactive({
+  selectedData()%>%summarise(Units_Sold = sum(Qty))
+})
+
+renderValueBox({
+  units <- formatC(units_sold()$Units_Sold,  digits = 0, format = 'f')
+  valueBox(
+    value = units
+  )
+})
+```
+
+### Dollar Sales to Date
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+Dollar_Sales <- reactive({
+  selectedData()%>%summarise(Dollar_Sales = sum(Total))
+})
+
+renderValueBox({
+  dollars <- paste0("$",formatC(Dollar_Sales()$Dollar_Sales,  digits = 2, format = 'f'))
+  valueBox(
+    value = dollars
+  )
+})
+```
+
+### Historical Units Sold Per Day (Since Inception)
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+Unit_Sold_Per_Day <- reactive({
+  selectedData()%>%summarise(Unit_Sold_Per_Day = sum(Qty)/as.numeric(days(), units='days'))
+})
+
+renderValueBox({
+  unitsperday <- formatC(Unit_Sold_Per_Day()$Unit_Sold_Per_Day,  digits = 2, format = 'f')
+  valueBox(
+    value = unitsperday
+  )
+})
+```
+
+
+### Historical Average Unit Price (Since Inception)
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+Historical_Average_Unit_Price <- reactive({
+  selectedData()%>%summarise(Historical_Average_Unit_Price = sum(Total)/sum(Qty))
+})
+
+renderValueBox({
+  salesperdate <- paste0("$",formatC(Historical_Average_Unit_Price()$Historical_Average_Unit_Price,  digits = 2, format = 'f'))
+  valueBox(
+    value = salesperdate
+  )
+})
+```
+
+### Average Daily Units Sold Last Week 
+```{r}
+sevendaysselectedData <- reactive({
+  last_seven_days %>% filter(last_seven_days$Kiosk == input$Kiosk)
+})
+
+seven_days_running_average_unit_sales <- reactive({
+  sevendaysselectedData()%>%summarise(seven_days_average = sum(Qty)/7)
+})
+
+renderValueBox({
+  running_average_unit_sales <- formatC(seven_days_running_average_unit_sales()$seven_days_average,  digits = 2, format = 'f')
+  valueBox(
+    value = running_average_unit_sales
+  )
+})
+```
+
+### Average Daily Dollar Sales Past Week 
+```{r}
+sevendaysselectedData <- reactive({
+  last_seven_days %>% filter(last_seven_days$Kiosk == input$Kiosk)
+})
+
+seven_days_running_average_dollar_sales <- reactive({
+  sevendaysselectedData()%>%summarise(seven_days_dollar_average = sum(Total)/7)
+})
+
+renderValueBox({
+  running_average_dollar_sales <- paste0('$',formatC(seven_days_running_average_dollar_sales()$seven_days_dollar_average,  digits = 2, format = 'f'))
+  valueBox(
+    value = running_average_dollar_sales
+  )
+})
+```
+
+### Average Unit Price Past 7 Days
+```{r}
+sevendaysselectedData <- reactive({
+  last_seven_days %>% filter(last_seven_days$Kiosk == input$Kiosk)
+})
+
+seven_days_average_price <- reactive({
+  sevendaysselectedData()%>%summarise(seven_days_average_price = sum(Total)/sum(Qty))
+})
+
+renderValueBox({
+  running_average_unit_price<- paste0('$',formatC(seven_days_average_price()$seven_days_average_price,  digits = 2, format = 'f'))
+  valueBox(
+    value = running_average_unit_price
+  )
+})
+```
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Average Unit Price by Week
+```{r}
+
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+Avg_Unit_Price <- reactive({selectedData()%>%group_by(week(Date))%>%summarise(AvgUnitPrice=sum(Total)/sum(Qty))
+  })
+
+overall <- reactive({df%>%group_by(week(Date))%>%summarise(avgUnitPrice=sum(Total)/sum(Qty))%>%
+    filter(`week(Date)`%in%Avg_Unit_Price()$`week(Date)`)})
+
+fridgetypeAverage <- reactive({
+  df %>% filter(Fridge_Type == selectedData()$Fridge_Type[1])%>%group_by(week(Date))%>%summarise(avgUnitPrice=sum(Total)/sum(Qty))%>%
+    filter(`week(Date)`%in%Avg_Unit_Price()$`week(Date)`)
+})
+
+
+renderPlotly(plot_ly(Avg_Unit_Price(), x=~`week(Date)`, y=~AvgUnitPrice,name=input$Kiosk,type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~overall()$avgUnitPrice,name='6AM Average',mode = "lines",line=list(dash='dot',color='blue'))%>%add_trace(y=~fridgetypeAverage()$avgUnitPrice, name = paste0(selectedData()$Fridge_Type[1],' Average'), mode = 'lines', line = list(dash='dot',color='#d62728'))%>%
+  layout(title = "Average Unit Price by Week",
+         paper_bgcolor='rgb(255,255,255)', plot_bgcolor='rgb(229,229,229)',
+         xaxis = list(title = "Week",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = FALSE),
+         yaxis = list(title = "Average Unit Price",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = TRUE)))
+```
+
+### Average Units Sold Per Day
+```{r}
+AvgUnitSold <- reactive({selectedData()%>%group_by(week(Date))%>%summarise(AvgUnitSold=sum(Qty)/length(unique(Date)))
+  })
+
+
+number_of_fridge_active <- reactive({df %>% group_by(week(Date))%>%filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)%>%summarise(numberFridge = length(unique(Kiosk)))})
+
+overall1 <- reactive({df%>%group_by(week(Date))%>%summarise(AvgUnitSold=sum(Qty)/length(unique(Date)))%>%
+    filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)})
+overallAverage <- reactive({overall_average = overall1()$AvgUnitSold/number_of_fridge_active()$numberFridge})
+
+number_of_fridge_active_fridge_type <- reactive({df %>% filter(Fridge_Type==selectedData()$Fridge_Type[1])%>% group_by(week(Date))%>%filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)%>%summarise(numberFridge = length(unique(Kiosk)))})
+fridgetypeAverage1 <- reactive({df%>%group_by(week(Date))%>%filter(Fridge_Type==selectedData()$Fridge_Type[1])%>%summarise(AvgUnitSold=sum(Qty)/length(unique(Date)))%>%filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)})
+fridgetypeAverage11 <- reactive({overall_average = fridgetypeAverage1()$AvgUnitSold/number_of_fridge_active_fridge_type()$numberFridge})
+
+renderPlotly(plot_ly(AvgUnitSold(), x=~`week(Date)`, y=~AvgUnitSold,name=input$Kiosk, type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~overallAverage(), name='6AM Average',mode = "lines",line=list(dash='dot',color='blue'))%>%add_trace(y=~fridgetypeAverage11(), name = paste0(selectedData()$Fridge_Type[1],' Average'), mode = 'lines', line = list(dash='dot',color='#d62728'))%>%
+  layout(title = "Average Units Sold Per Day",
+         paper_bgcolor='rgb(255,255,255)', plot_bgcolor='rgb(229,229,229)',
+         xaxis = list(title = "Week",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = FALSE),
+         yaxis = list(title = "Average Unit Sold",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = TRUE)))
+```
+
+### Average Dollar Sales Per Day
+```{r}
+AvgTotalSold <- reactive({selectedData()%>%group_by(week(Date))%>%summarise(AvgTotalSold=sum(Total)/length(unique(Date)))
+  })
+
+#number_of_fridge_active <- reactive({df %>% group_by(week(Date))%>%filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)%>%summarise(numberFridge = length(unique(Kiosk)))})
+
+overall2 <- reactive({df%>%group_by(week(Date))%>%summarise(AvgTotalSold=sum(Total)/length(unique(Date)))%>%
+    filter(`week(Date)`%in%AvgTotalSold()$`week(Date)`)})
+overallAverage2 <- reactive({overall_average = overall2()$AvgTotalSold/number_of_fridge_active()$numberFridge})
+
+#number_of_fridge_active_fridge_type <- reactive({df %>% filter(Fridge_Type==selectedData()$Fridge_Type[1])%>% group_by(week(Date))%>%filter(`week(Date)`%in%AvgUnitSold()$`week(Date)`)%>%summarise(numberFridge = length(unique(Kiosk)))})
+
+fridgetypeAverage2 <- reactive({df%>%group_by(week(Date))%>%filter(Fridge_Type==selectedData()$Fridge_Type[1])%>%summarise(AvgTotalSold=sum(Total)/length(unique(Date)))%>%filter(`week(Date)`%in%AvgTotalSold()$`week(Date)`)})
+fridgetypeAverage21 <- reactive({overall_average = fridgetypeAverage2()$AvgTotalSold/number_of_fridge_active_fridge_type()$numberFridge})
+
+renderPlotly(plot_ly(AvgTotalSold(), x=~`week(Date)`, y=~AvgTotalSold,type = 'scatter', mode = 'lines',name=input$Kiosk,line=list(color = '#2ca02c'))%>%add_trace(y=~overallAverage2(), name='6AM Average',mode = "lines",line=list(dash='dot',color='blue'))%>%add_trace(y=~fridgetypeAverage21(), name = paste0(selectedData()$Fridge_Type[1],' Average'), mode = 'lines', line = list(dash='dot',color='#d62728'))%>%
+  layout(title = "Average Dollar Sales Per Day",
+         paper_bgcolor='rgb(255,255,255)', plot_bgcolor='rgb(229,229,229)',
+         xaxis = list(title = "Week",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = FALSE),
+         yaxis = list(title = "Average Dollar Sales $",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = TRUE)))
+```
+
+### Fridge Information
+
+```{r}
+
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+
+renderTable({
+  display <- info %>% filter(Kiosk == input$Kiosk)%>%gather('Parameter','Value')
+  hist <- rbind(display, c('Historical average unit price', formatC(Historical_Average_Unit_Price()$Historical_Average_Unit_Price,digits = 2, format = 'f')))
+  hist[8,2] <- paste("$", hist[8,2], sep = ' ')
+  hist[11,2] <- paste("$", hist[11,2], sep = ' ')
+  hist
+})
+
+
+
+```   
+ 
+### Projected Performance
+    
+```{r}
+selectedData <- reactive({
+  df %>% filter(df$Kiosk == input$Kiosk)
+})
+
+renderTable({
+  monthly <- info %>% filter(Kiosk == input$Kiosk) %>% mutate('Days operational' = round(`Days Operational Per Month`),'Monthly Maintenance Fee' = `Monthly Maintenance Fee`, 'Units Sold' = round(`Days Operational Per Month`*Unit_Sold_Per_Day()$Unit_Sold_Per_Day,0), 'Projected Revenue' = round(`Units Sold`*Historical_Average_Unit_Price()$Historical_Average_Unit_Price +`Monthly Maintenance Fee`,0), 'COGS'=round(`Food COGS Margin`*`Projected Revenue`,0), 'Byte Service Fees' = `Monthly Byte Service Fees`, 'Stocking Expenses' = `Times Stocked Per Week`*15*4,'Food waste' = round(`Projected Revenue`*`Food Waste %`,0), 'Profit' = round(`Projected Revenue`-`COGS`-`Byte Service Fees`-`Stocking Expenses`,0))
+  display2 <- monthly%>%select(`Days operational`:`Profit`)%>%gather('Parameter', 'Month')
+  display2 <- display2 %>% mutate('Year' = `Month`*12)
+  payback <- data.frame('Parameter'= 'Payback Period', 'Month' = round(monthly$`Fridge Cost`/monthly$`Profit`,2), 'Year' = round(monthly$`Fridge Cost`/monthly$`Profit`/12,2))
+  payback <- rbind(display2,payback)
+  for (i in 2:3){
+  for (b in 3:8){
+    payback[b,i] = paste("$", payback[b,i], sep = "")
+  }
+}
+  
+  payback
+})
+```
+
+### Yesterday's sales by time of day
+
+```{r}
+timeofday <- reactive({
+  df %>% filter(Kiosk == input$Kiosk, Date == max(df$Date)) %>%mutate(hourGroup = strftime(DateTime, format="%H")) %>% select(`Order ID`: Time, DateTime:hourGroup, Kiosk: `SLS?`)%>%group_by(hourGroup)%>%summarise(QTY = sum(Qty))%>%ungroup()
+})
+
+renderPlotly(plot_ly(timeofday(), x=~`hourGroup`, y=~QTY,name=input$Kiosk,type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%
+  layout(title = "Sales by Time of Day",
+         paper_bgcolor='rgb(255,255,255)', plot_bgcolor='rgb(229,229,229)',
+         xaxis = list(title = "Hour",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = FALSE),
+         yaxis = list(title = "Units Sold",
+                      gridcolor = 'rgb(255,255,255)',
+                      showgrid = TRUE,
+                      showline = FALSE,
+                      showticklabels = TRUE,
+                      tickcolor = '#2ca02c',
+                      ticks = 'outside',
+                      zeroline = TRUE)))
+```
+
+
+Last Seven Days 
+=======================================================================
+
+Row 
+-------------------------------------
+
+### Units sold in the past seven days
+
+```{r}
+last_seven <- last_seven_days%>%group_by(Date, Fridge_Type)%>%summarise(QTY = sum(Qty))%>%ungroup()
+
+last_seven %>% plot_ly(x=~Date, y=~QTY, color=~as.factor(Fridge_Type), type='scatter',mode='lines')
+```
+
+### Dollar Sales in the past seven days
+
+```{r}
+last_seven_dollar <- last_seven_days%>%group_by(Date, Fridge_Type)%>%summarise(Total = sum(Total))%>%ungroup()
+
+last_seven_dollar %>% plot_ly(x=~Date, y=~Total, color=~as.factor(Fridge_Type), type='scatter',mode='lines')
+```
+
+
+Rolling Average 
+=======================================================================
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### 7-Day Rolling Average Unit Price
+
+This graph shows the seven day rolling average unit price. 
+```{r}
+current_date  = as.Date(max(df$Date),format='%Y-%m-%d')
+starting_date  = current_date-13
+daterange14     = seq.Date(starting_date, current_date,by="day")
+
+
+my_sales = list()
+i= 1
+for (d in daterange14){
+  sliced = df%>%filter(Date >= d - 6 & Date <= d)
+  my_sales[[i]] = sliced
+  i = i+1
+}
+
+rollingAvgUnitPriceARS = data.frame(Date = daterange14)
+rollingAvgUnitPriceByte = data.frame(Date = daterange14)
+rollingAvgUnitPrice = data.frame(Date = daterange14)
+
+r = 1
+for(i in seq(1,14)){
+  rollingAvgUnitPriceARS$AvgUnitPrice[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(AvgUnitPrice = round(sum(Total)/sum(Qty),2))
+  r=r+1
+}
+
+j = 1
+for(i in seq(1,14)){
+  rollingAvgUnitPriceByte$AvgUnitPrice[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(AvgUnitPrice = round(sum(Total)/sum(Qty),2))
+  j=j+1
+}
+
+k = 1
+for(i in seq(1,14)){
+  rollingAvgUnitPrice$TotalAvgUnitPrice[k] = my_sales[[i]]%>%summarise(AvgUnitPrice = round(sum(Total)/sum(Qty),2))
+  k=k+1
+}
+
+rollingAvgUnitPrice$ARSAvg = rollingAvgUnitPriceARS$AvgUnitPrice
+rollingAvgUnitPrice$ByteAvg = rollingAvgUnitPriceByte$AvgUnitPrice
+
+plot_ly(rollingAvgUnitPrice, x=~daterange14,y=~TotalAvgUnitPrice, name='All Fridges', mode = 'lines', type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~ARSAvg,name='ARS', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'red'))%>%add_trace(y=~ByteAvg,name='Byte', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'blue'))
+```
+
+### 7-Day Rolling Units Sold Per Day
+
+This graph shows the seven day rolling average units sold per day. 
+```{r}
+rollingAvgUnitsSoldARS = data.frame(Date = daterange14)
+rollingAvgUnitsSoldByte = data.frame(Date = daterange14)
+rollingAvgUnitsSold = data.frame(Date = daterange14)
+
+r = 1
+for(i in seq(1,14)){
+  rollingAvgUnitsSoldARS$AvgUnitsSold[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(AvgUnitsSold = round(sum(Qty)/7,2))
+  r=r+1
+}
+
+j = 1
+for(i in seq(1,14)){
+  rollingAvgUnitsSoldByte$AvgUnitsSold[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(AvgUnitsSold = round(sum(Qty)/7,2))
+  j=j+1
+}
+
+k = 1
+for(i in seq(1,14)){
+  rollingAvgUnitsSold$TotalAvgUnitsSold[k] = my_sales[[i]]%>%summarise(AvgUnitsSold = round(sum(Qty)/7,2))
+  k=k+1
+}
+
+rollingAvgUnitsSold$ARSAvg = rollingAvgUnitsSoldARS$AvgUnitsSold
+rollingAvgUnitsSold$ByteAvg = rollingAvgUnitsSoldByte$AvgUnitsSold
+
+plot_ly(rollingAvgUnitsSold, x=~Date,y=~TotalAvgUnitsSold, name='All Fridges', mode = 'lines', type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~ARSAvg,name='ARS', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'red'))%>%add_trace(y=~ByteAvg,name='Byte', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'blue'))
+```
+
+### Averge Units Sold Per Fridge (7-Day Rolling Average)
+
+This graph shows the seven day rolling average units sold per fridge
+
+```{r}
+AvgUnitsSoldPerARSFridge = data.frame(Date = daterange14)
+AvgUnitsSoldPerByteFridge = data.frame(Date = daterange14)
+AvgUnitsSoldPerFridge = data.frame(Date = daterange14)
+
+
+r = 1
+for(i in seq(1,14)){
+  AvgUnitsSoldPerARSFridge$ActiveFridge[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(activeARSFridges = length(unique(Kiosk)))
+  AvgUnitsSoldPerARSFridge$UnitsSold[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(TotalUnitsSold = sum(Qty))
+  AvgUnitsSoldPerARSFridge$SoldPerFridge[r] = round(AvgUnitsSoldPerARSFridge$UnitsSold[[r]]/AvgUnitsSoldPerARSFridge$ActiveFridge[[r]]/7,2)
+  r=r+1
+}
+
+
+
+j = 1
+for(i in seq(1,14)){
+  AvgUnitsSoldPerByteFridge$ActiveFridge[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(activeByteFridges = length(unique(Kiosk)))
+  AvgUnitsSoldPerByteFridge$TotalUnitsSold[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(TotalUnitsSold = sum(Qty))
+  AvgUnitsSoldPerByteFridge$SoldPerFridge[j] = round(AvgUnitsSoldPerByteFridge$TotalUnitsSold[[j]]/AvgUnitsSoldPerByteFridge$ActiveFridge[[j]]/7,2)
+  j=j+1
+}
+
+
+k = 1
+for(i in seq(1,14)){
+  AvgUnitsSoldPerFridge$ActiveFridge[k] = my_sales[[i]]%>%summarise(activeFridges = length(unique(Kiosk)))
+  AvgUnitsSoldPerFridge$TotalUnitsSold[k] = my_sales[[i]]%>%summarise(TotalUnitsSold = sum(Qty))
+  AvgUnitsSoldPerFridge$SoldPerFridge[k] = round(AvgUnitsSoldPerFridge$TotalUnitsSold[[k]]/AvgUnitsSoldPerFridge$ActiveFridge[[k]]/7,2)
+  k=k+1
+}
+
+
+AvgUnitsSoldPerFridge$Byte = AvgUnitsSoldPerByteFridge$SoldPerFridge
+AvgUnitsSoldPerFridge$ARS = AvgUnitsSoldPerARSFridge$SoldPerFridge
+
+
+plot_ly(AvgUnitsSoldPerFridge, x=~Date,y=~SoldPerFridge, name='All Fridges', mode = 'lines', type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~ARS,name='ARS', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'red'))%>%add_trace(y=~Byte,name='Byte', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'blue'))
+```
+
+
+
+### 7-Day Rolling Average Dollar Sales Per Day
+This graph shows the seven day rolling average dollar sales per day
+
+```{r}
+rollingAvgDollarSalesARS = data.frame(Date = daterange14)
+rollingAvgDollarSalesByte = data.frame(Date = daterange14)
+rollingAvgDollarSales = data.frame(Date = daterange14)
+
+r = 1
+for(i in seq(1,14)){
+  rollingAvgDollarSalesARS$AvgDollarSales[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(AvgDollarSales = round(sum(Total)/7,2))
+  r=r+1
+}
+
+j = 1
+for(i in seq(1,14)){
+  rollingAvgDollarSalesByte$AvgDollarSales[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(AvgDollarSales = round(sum(Total)/7,2))
+  j=j+1
+}
+
+k = 1
+for(i in seq(1,14)){
+  rollingAvgDollarSales$TotalAvgDollarSales[k] = my_sales[[i]]%>%summarise(AvgDollarSales = round(sum(Total)/7,2))
+  k=k+1
+}
+
+rollingAvgDollarSales$ARSAvg = rollingAvgDollarSalesARS$AvgDollarSales
+rollingAvgDollarSales$ByteAvg = rollingAvgDollarSalesByte$AvgDollarSales
+
+plot_ly(rollingAvgDollarSales, x=~Date,y=~TotalAvgDollarSales, name='All Fridges', mode = 'lines', type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~ARSAvg,name='ARS', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'red'))%>%add_trace(y=~ByteAvg,name='Byte', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'blue'))
+```
+
+### Averge Dollar Sales Per Fridge (7 day Rolling Average) 
+
+This graph shows the seven day rolling average dollar sales per fridge
+
+```{r}
+AvgDollarSalesPerARSFridge = data.frame(Date = daterange14)
+AvgDollarSalesPerByteFridge = data.frame(Date = daterange14)
+AvgDollarSalesPerFridge = data.frame(Date = daterange14)
+
+
+r = 1
+for(i in seq(1,14)){
+  AvgDollarSalesPerARSFridge$ActiveFridge[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(activeARSFridges = length(unique(Kiosk)))
+  AvgDollarSalesPerARSFridge$dollarSales[r] = my_sales[[i]]%>%filter(Fridge_Type=='ARS')%>%summarise(TotalDollarSales =sum(Total))
+  AvgDollarSalesPerARSFridge$SoldPerFridge[r] = round(AvgDollarSalesPerARSFridge$dollarSales[[r]]/AvgDollarSalesPerARSFridge$ActiveFridge[[r]]/7,2)
+  r=r+1
+}
+
+
+
+j = 1
+for(i in seq(1,14)){
+  AvgDollarSalesPerByteFridge$ActiveFridge[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(activeByteFridges = length(unique(Kiosk)))
+  AvgDollarSalesPerByteFridge$dollarSales[j] = my_sales[[i]]%>%filter(Fridge_Type=='Byte')%>%summarise(TotalDollarSales = sum(Total))
+  AvgDollarSalesPerByteFridge$SoldPerFridge[j] = round(AvgDollarSalesPerByteFridge$dollarSales[[j]]/AvgDollarSalesPerByteFridge$ActiveFridge[[j]]/7,2)
+  j=j+1
+}
+
+
+k = 1
+for(i in seq(1,14)){
+  AvgDollarSalesPerFridge$ActiveFridge[k] = my_sales[[i]]%>%summarise(activeFridges = length(unique(Kiosk)))
+  AvgDollarSalesPerFridge$dollarSales[k] = my_sales[[i]]%>%summarise(TotalDollarSales = sum(Total))
+  AvgDollarSalesPerFridge$SoldPerFridge[k] = round(AvgDollarSalesPerFridge$dollarSales[[k]]/AvgDollarSalesPerFridge$ActiveFridge[[k]]/7,2)
+  k=k+1
+}
+
+
+AvgDollarSalesPerFridge$Byte = AvgDollarSalesPerByteFridge$SoldPerFridge
+AvgDollarSalesPerFridge$ARS =AvgDollarSalesPerARSFridge$SoldPerFridge
+
+
+plot_ly(AvgDollarSalesPerFridge, x=~Date,y=~SoldPerFridge, name='All Fridges', mode = 'lines', type = 'scatter', mode = 'lines',line=list(color = '#2ca02c'))%>%add_trace(y=~ARS,name='ARS', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'red'))%>%add_trace(y=~Byte,name='Byte', mode = 'lines',type= 'scatter',mode = 'lines', line = list(color = 'blue'))
+```
+
+Time of Day 
+======================================================================= 
+This page shows you last seven days unit sales breakdown by time of day 
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Product Category  
+
+```{r}
+
+top_date  = as.Date(max(df$Date),format='%Y-%m-%d')
+low_date  = top_date-6
+dts_      = seq.Date(low_date, top_date,by="day")
+daterange1 = dts_[rev(order(as.Date(dts_, format = "%m-%d-%Y")))]
+
+dff <- df %>% filter(Date %in% daterange1) %>% mutate(hourGroup = strftime(DateTime, format="%H")) %>% select(`Order ID`: Time, DateTime:hourGroup, Kiosk: `SLS?`)
+
+df1 <- dff %>% group_by(hourGroup, `Product Category`)%>%summarise(QTY = sum(Qty))%>%ungroup()
+df1 %>% plot_ly(x=~hourGroup, y=~QTY,color=~`Product Category`, type = 'scatter', mode= "lines")%>%
+  layout(xaxis = list(title = 'Time of Day (Hour)'))
+
+```
+
+### Fridge Type
+
+```{r}
+
+df2 <- dff %>% filter(Date %in% daterange1)%>% group_by(hourGroup, Fridge_Type)%>%summarise(QTY = sum(Qty))%>%ungroup()
+df2 %>% plot_ly(x=~hourGroup, y=~QTY,color=~Fridge_Type, type = 'scatter', mode= "lines")%>%
+  layout(xaxis = list(title = 'Time of Day (Hour)'))
+
+```
+
+### Kiosk Segment
+
+```{r}
+df3 <- dff %>% filter(Date %in% daterange1)%>% group_by(hourGroup, Kiosk_Segment)%>%summarise(QTY = sum(Qty))%>%ungroup()
+df3 %>% plot_ly(x=~hourGroup, y=~QTY,color=~Kiosk_Segment, type = 'scatter', mode= "lines")%>%
+  layout(xaxis = list(title = 'Time of Day (Hour)'))
+```
+
+### Product
+
+```{r}
+df6 <- dff %>% filter(Date %in% daterange1)%>% group_by(hourGroup, Product)%>%summarise(QTY = sum(Qty))%>%ungroup()
+df6 %>% plot_ly(x=~hourGroup, y=~QTY,color=~Product, type = 'scatter', mode= "lines")%>%
+  layout(xaxis = list(title = 'Time of Day (Hour)'))
+```
+
+
+About 
+======================================================================= 
+
+
+***
+
+The ‘Sales’ tab is showing you sales summary and fridge P/L analysis by individual fridges.
+
+	- ‘Days active’: the number of days a fridge has been active. 
+	
+	- ‘Units Sold to Date’: the total number of products sold at the kiosk you selected to date.
+	
+	- ‘Dollar Sales to Date’: the total dollar sales at the location selected since inception. 
+	
+	- ‘Historical Units Sold Per Day (Since Inception)’: average units sold per day since inception (total units sold to date/days active).
+	
+	- ‘Historical Average Unit Price Since Inception’: total dollar sales/total units sold.
+	
+	- ‘Average Daily Units Sold Last Week’: average units sold per day for the last 7 days. Note that if the fridge has not been active longer than 7 days this data is not accurate. 
+	
+	- ‘Average Daily Dollar Sales Past Week’: average dollar sales per day for the last 7 days. Note that if the fridge has not been active longer than 7 days this data is not accurate. 
+	
+	- ‘Average Unit Price Past 7 Days’: average unit price within the last 7 days. Note that if the fridge has not been active longer than 7 days this data is not accurate. 
+	
+***
+
+The 'Rolling Average' tab is showing you 7-day rolling average data over a 14-day time span (2 weeks)
+
+
+  
